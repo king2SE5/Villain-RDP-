@@ -39,9 +39,18 @@ jobs:
           $password = -join ($rawPassword | Sort-Object { Get-Random })
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          New-LocalUser -Name "RunnerAdmin" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RunnerAdmin"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RunnerAdmin"
+          # Use "RDPUser" to avoid colliding with GitHub's default "runneradmin" account
+          $username = "RDPUser"
+
+          # Remove existing user if present to avoid conflicts
+          if (Get-LocalUser -Name $username -ErrorAction SilentlyContinue) {
+              Remove-LocalUser -Name $username
+              Write-Host "Existing user $username removed."
+          }
+
+          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
           
           # Mask password in logs to prevent accidental leaks
           Write-Host "::add-mask::$password"
@@ -69,7 +78,7 @@ jobs:
           Write-Host "=== RDP DEBUG SESSION ESTABLISHED ==="
           Write-Host "========================================"
           Write-Host "  Tailscale IP : $env:TAILSCALE_IP"
-          Write-Host "  Username     : RunnerAdmin"
+          Write-Host "  Username     : RDPUser"
           Write-Host "  Password     : $env:RDP_PASSWORD"
           Write-Host "========================================"
           Write-Host "Session will automatically close in 60 minutes."
@@ -77,6 +86,6 @@ jobs:
       - name: Maintain Debug Window
         shell: powershell
         run: |
-          # Safe wait loop that respects the job timeout
+          # Safe wait loop that respects the job timeout limit
           Start-Sleep -Seconds 3600
           
