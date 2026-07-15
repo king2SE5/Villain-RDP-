@@ -39,7 +39,6 @@ jobs:
           $password = -join ($rawPassword | Sort-Object { Get-Random })
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          # Use "RDPUser" to avoid colliding with GitHub's default "runneradmin" account
           $username = "RDPUser"
 
           # Remove existing user if present to avoid conflicts
@@ -59,16 +58,40 @@ jobs:
       - name: Install and Connect Tailscale
         shell: powershell
         run: |
+          # 1. Check if the Tailscale Secret is actually available
+          $authKey = "${{ secrets.TAILSCALE_AUTH_KEY }}"
+          if ([string]::IsNullOrEmpty($authKey)) {
+              Write-Error "ERROR: TAILSCALE_AUTH_KEY secret is missing! Go to your repo Settings -> Secrets and variables -> Actions and add it."
+              exit 1
+          }
+
+          # 2. Download Tailscale MSI
+          Write-Host "Downloading Tailscale..."
           Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile "$env:TEMP\tailscale.msi" -UseBasicParsing
+          
+          # 3. Install Tailscale
+          Write-Host "Installing Tailscale..."
           Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\tailscale.msi`"", "/quiet", "/norestart" -Wait
           
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID --ssh
+          # 4. Connect (Note: --ssh removed as it is unsupported on Windows)
+          Write-Host "Connecting to Tailscale network..."
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID
           
+          # 5. Fetch assigned IP Address
           $tsIP = $null
-          while (-not $tsIP) {
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 12) {
               Start-Sleep -Seconds 5
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
+              $retries++
+              Write-Host "Waiting for IP... (Attempt $retries)"
           }
+
+          if (-not $tsIP) {
+              Write-Error "Failed to obtain a Tailscale IP address."
+              exit 1
+          }
+
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
       - name: Output Connection Details
