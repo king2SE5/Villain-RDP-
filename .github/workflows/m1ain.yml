@@ -1,0 +1,166 @@
+name: Multi-Country High-Performance RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      country:
+        description: 'Apni pasand ki RDP Location chunein (Ya Random chorein)'
+        required: true
+        default: 'Random'
+        type: choice
+        options:
+          - Random
+          - United States (US)
+          - United Kingdom (GB)
+          - Singapore (SG)
+          - Japan (JP)
+          - Germany (DE)
+          - France (FR)
+          - India (IN)
+          - Canada (CA)
+          - Spain (ES)
+          - Italy (IT)
+          - Norway (NO)
+          - China (CN)
+          - Russia (RU)
+          - United Arab Emirates (AE)
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360 
+
+    steps:
+      - name: Configure Core & High-Performance RDP Settings
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 2 -Force
+          New-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "Environment" -PropertyType String -Value "" -Force
+          
+          if (Get-NetFirewallRule -DisplayName "RDP-Tailscale" -ErrorAction SilentlyContinue) {
+              Remove-NetFirewallRule -DisplayName "RDP-Tailscale"
+          }
+          New-NetFirewallRule -DisplayName "RDP-Tailscale" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389
+          Restart-Service -Name TermService -Force
+          Write-Host "RDP Optimization completed."
+
+      - name: Create RDP User with Ultra-Secure Password
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Security
+          $charSet = @{ Upper = [char[]](65..90); Lower = [char[]](97..122); Number = [char[]](48..57); Special = [char[]](33..46) }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper   | Get-Random -Count 4
+          $rawPassword += $charSet.Lower   | Get-Random -Count 4
+          $rawPassword += $charSet.Number  | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) { Remove-LocalUser -Name "RDP" }
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -Description "Multi-Country RDP User"
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
+          Write-Host "RDP user created successfully."
+
+      - name: Dynamic Smart VPN Router
+        shell: powershell
+        run: |
+          Write-Host "Installing OpenVPN CLI..."
+          choco install openvpn -y --no-progress
+
+          # Mapping Countries to ISO Codes
+          $inputTarget = "${{ github.event.inputs.country }}"
+          $isoMapping = @{
+              'United States (US)' = 'US'; 'United Kingdom (GB)' = 'GB'; 'Singapore (SG)' = 'SG';
+              'Japan (JP)' = 'JP'; 'Germany (DE)' = 'DE'; 'France (FR)' = 'FR';
+              'India (IN)' = 'IN'; 'Canada (CA)' = 'CA'; 'Spain (ES)' = 'ES';
+              'Italy (IT)' = 'IT'; 'Norway (NO)' = 'NO'; 'China (CN)' = 'CN';
+              'Russia (RU)' = 'RU'; 'United Arab Emirates (AE)' = 'AE'
+          }
+
+          $allCodes = @('US','GB','SG','JP','DE','FR','IN','CA','ES','IT','NO','CN','RU','AE')
+          
+          if ($inputTarget -eq 'Random' -or -not $isoMapping.ContainsKey($inputTarget)) {
+              $targetCode = $allCodes | Get-Random
+              Write-Host "Random Mode Active! Selected Country Code: $targetCode"
+          } else {
+              $targetCode = $isoMapping[$inputTarget]
+              Write-Host "Manual Mode Active! Target Country Code: $targetCode"
+          }
+
+          Write-Host "Fetching Live Global VPN Matrix..."
+          try {
+              $api = Invoke-WebRequest -Uri "http://www.vpngate.net/api/iphone/" -UseBasicParsing -TimeoutSec 15
+              $vpnLines = $api.Content -split "`n" | Where-Object { $_ -match ",$targetCode," -and $_ -match "vpngate" }
+          } catch {
+              Write-Warning "VPN API offline. Continuing with default runner location."
+              exit 0
+          }
+
+          # Fallback mechanism if selected country has 0 servers right now
+          if (-not $vpnLines) {
+              Write-Warning "Target country $targetCode is currently empty/offline. Finding any best available server..."
+              $vpnLines = $api.Content -split "`n" | Where-Object { $_ -match "vpngate" }
+          }
+
+          $success = $false
+          foreach ($line in ($vpnLines | Sort-Object { [set-buffer]; Get-Random } | Select-Object -First 5)) {
+              try {
+                  $fields = $line -split ","
+                  $b64Config = $fields[-1].Trim()
+                  $configBytes = [System.Convert]::FromBase64String($b64Config)
+                  [System.IO.File]::WriteAllBytes("$env:TEMP\target_vpn.ovpn", $configBytes)
+                  
+                  Write-Host "Connecting to VPN Tunnel..."
+                  $process = Start-Process "C:\Program Files\OpenVPN\bin\openvpn.exe" -ArgumentList "--config `"$env:TEMP\target_vpn.ovpn`"" -WindowStyle Hidden -PassThru
+                  Start-Sleep -Seconds 12
+                  
+                  $testIP = Invoke-RestMethod -Uri "https://ipinfo.io/json" -UseBasicParsing -TimeoutSec 5
+                  Write-Host "Connected successfully! Real Location: $($testIP.city), $($testIP.country) | IP: $($testIP.ip)"
+                  $success = $true
+                  break
+              } catch {
+                  Write-Host "This node was busy. Trying next available routing point..."
+                  if ($process) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+              }
+          }
+
+          if (-not $success) { Write-Warning "Could not establish secure tunnel. Defaulting to base Azure cluster." }
+
+      - name: Install & Connect Tailscale
+        shell: powershell
+        run: |
+          choco install tailscale -y --no-progress
+          $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (-not (Test-Path $tsPath)) { $tsPath = "tailscale" }
+
+          & $tsPath up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-multi-runner-$env:GITHUB_RUN_ID
+
+          $tsIP = $null
+          for ($i = 1; $i -le 15; $i++) {
+              Start-Sleep -Seconds 3
+              $tsIP = & $tsPath ip -4 2>$null
+              if ($tsIP) { break }
+          }
+          if (-not $tsIP) { Write-Error "Tailscale Timeout"; exit 1 }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Maintain Connection & Output Details
+        shell: powershell
+        run: |
+          Write-Host "`n=========================================" -ForegroundColor Green
+          Write-Host "         DYNAMIC RDP INITIALIZED         " -ForegroundColor Green
+          Write-Host "=========================================" -ForegroundColor Green
+          Write-Host " Tailscale IP : $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host " Credentials  : $env:RDP_CREDS" -ForegroundColor Yellow
+          Write-Host "=========================================`n" -ForegroundColor Green
+
+          while ($true) {
+              Start-Sleep -Seconds 180
+          }
+          
