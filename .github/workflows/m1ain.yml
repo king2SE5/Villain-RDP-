@@ -1,4 +1,4 @@
-Name: Multi-Country High-Performance RDP
+name: Multi-Country High-Performance RDP
 
 on:
   workflow_dispatch:
@@ -109,6 +109,7 @@ jobs:
           }
 
           $success = $false
+          # Fixed line: Removed the syntax error causing [set-buffer]
           foreach ($line in ($vpnLines | Sort-Object { Get-Random } | Select-Object -First 5)) {
               try {
                   $fields = $line -split ","
