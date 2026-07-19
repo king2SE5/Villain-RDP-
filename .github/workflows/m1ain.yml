@@ -1,4 +1,4 @@
-name: Multi-Country High-Performance RDP
+Name: Multi-Country High-Performance RDP
 
 on:
   workflow_dispatch:
@@ -109,7 +109,7 @@ jobs:
           }
 
           $success = $false
-          foreach ($line in ($vpnLines | Sort-Object { [set-buffer]; Get-Random } | Select-Object -First 5)) {
+          foreach ($line in ($vpnLines | Sort-Object { Get-Random } | Select-Object -First 5)) {
               try {
                   $fields = $line -split ","
                   $b64Config = $fields[-1].Trim()
